@@ -175,8 +175,6 @@ class File extends EventEmitter {
         const offset = index * maxReadChunkLength;
         yield ((await this.readChunk(index, offset)) as Buffer);
       }
-  
-      return buffer;
     }());
   }
 

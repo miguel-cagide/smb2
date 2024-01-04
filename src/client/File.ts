@@ -170,7 +170,6 @@ class File extends EventEmitter {
       const fileSize = Number(this.fileSize);
       const chunkCount = Math.ceil(fileSize / maxReadChunkLength);
   
-      const buffer = Buffer.alloc(fileSize);
       for (let index = 0; index < chunkCount; index++) {
         const offset = index * maxReadChunkLength;
         yield ((await this.readChunk(index, offset)) as Buffer);

@@ -22,7 +22,16 @@ export class FileWriteStream extends Writable {
     _write(chunk: Buffer, encoding, callback) {
         const chunkSize = chunk.length
         if (chunkSize > this.maxWriteChunkLength) {
-            
+            const promises: Promise<void>[] = [];
+            for (let offset = 0; offset < chunkSize; offset += this.maxWriteChunkLength) {
+                promises.push(this.fileWriter(this._bytesWritten + offset, chunk.subarray(offset, this.maxWriteChunkLength)));
+            }
+            Promise.all(promises)
+            .then(() => {
+                this._bytesWritten += chunkSize;
+                callback();
+            })
+            .catch(callback);
         } else {
             this.fileWriter(this._bytesWritten, chunk)
             .then(() => {

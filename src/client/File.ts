@@ -164,8 +164,8 @@ class File extends EventEmitter {
     return buffer;
   }
 
-  async createReadStream() {
-    Readable.from(async function* read() {
+  createReadStream() {
+    return Readable.from(async function* read() {
 
       const fileSize = Number(this.fileSize);
       const chunkCount = Math.ceil(fileSize / maxReadChunkLength);

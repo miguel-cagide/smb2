@@ -158,6 +158,18 @@ class Tree extends EventEmitter {
     return buffer;
   }
 
+  async createFileReadableStream(path: string) {
+    const file = new File(this);
+    this.registerFile(file);
+
+    await file.open(path);
+    const stream = file.createReadStream();
+    stream.once("close", async () => {
+      await file.close();
+    })
+    return stream;
+  }
+
   private registerFile(file: File) {
     file
       .once("open", () => this.openFiles.push(file))

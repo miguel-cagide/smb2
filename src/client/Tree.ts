@@ -176,9 +176,9 @@ class Tree extends EventEmitter {
 
     await file.open(path);
     const stream = file.createReadStream();
-    stream.once("end", async () => {
+    stream.once("close", async () => {
       await file.close();
-    })
+    });
     return stream;
   }
 

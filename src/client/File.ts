@@ -10,6 +10,7 @@ import CreateDispositionType from "../protocol/smb2/CreateDispositionType";
 import FilePipePrinterAccess from "../protocol/smb2/FilePipePrinterAccess";
 import { FileInfoClass, InfoType } from "../protocol/smb2/packets/SetInfo";
 import { Readable } from "stream";
+import { FileWriteStream } from "./stream/FileWriteStream";
 
 const maxReadChunkLength = 0x00010000;
 const maxWriteChunkLength = 0x00010000 - 0x71;
@@ -110,6 +111,18 @@ class File extends EventEmitter {
     });
   }
 
+  private async writeChunk(offset: number, chunk: Buffer) {
+
+      const offsetBuffer = Buffer.alloc(8);
+      offsetBuffer.writeBigUInt64LE(BigInt(offset));
+
+      await this.tree.request({ type: PacketType.Write }, {
+        fileId: this._id,
+        buffer: chunk,
+        offset: offsetBuffer
+      });
+  }
+
   async write(content: Buffer | string) {
     const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content, "utf8");
     const chunkCount = Math.ceil(buffer.length / maxWriteChunkLength);
@@ -120,15 +133,12 @@ class File extends EventEmitter {
       const length = nextOffset > buffer.length ? buffer.length - offset : nextOffset - offset;
       const chunk = buffer.slice(offset, offset + length);
 
-      const offsetBuffer = Buffer.alloc(8);
-      offsetBuffer.writeBigUInt64LE(BigInt(offset));
-
-      await this.tree.request({ type: PacketType.Write }, {
-        fileId: this._id,
-        buffer: chunk,
-        offset: offsetBuffer
-      });
+      await this.writeChunk(offset, chunk);
     }
+  }
+
+  createWriteStream() {
+    return new FileWriteStream(maxWriteChunkLength, this.writeChunk.bind(this));
   }
 
   private async readChunk(initial: number, offset: number) {
@@ -165,16 +175,15 @@ class File extends EventEmitter {
   }
 
   createReadStream() {
+    const fileSize = Number(this.fileSize);
     return Readable.from(async function* read() {
-
-      const fileSize = Number(this.fileSize);
       const chunkCount = Math.ceil(fileSize / maxReadChunkLength);
   
       for (let index = 0; index < chunkCount; index++) {
         const offset = index * maxReadChunkLength;
         yield ((await this.readChunk(index, offset)) as Buffer);
       }
-    }());
+    }.bind(this)());
   }
 
   async exists(path: string) {

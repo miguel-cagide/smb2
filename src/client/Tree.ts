@@ -132,6 +132,18 @@ class Tree extends EventEmitter {
     await file.close();
   }
 
+  async createFileWriteStream(path: string) {
+    const file = new File(this);
+    this.registerFile(file);
+    await file.create(path);
+    const stream = file.createWriteStream();
+    stream.once("close", async () => {
+      await file.setSize(BigInt(stream.bytesWritten));
+      file.close();
+    });
+    return stream;
+  }
+
   async removeFile(path: string) {
     const file = new File(this);
     this.registerFile(file);
@@ -139,7 +151,7 @@ class Tree extends EventEmitter {
     await file.remove();
     await file.close();
   }
-  
+
   async renameFile(path: string, newPath: string) {
     const file = new File(this);
     this.registerFile(file);
@@ -158,13 +170,13 @@ class Tree extends EventEmitter {
     return buffer;
   }
 
-  async createFileReadableStream(path: string) {
+  async createFileReadStream(path: string) {
     const file = new File(this);
     this.registerFile(file);
 
     await file.open(path);
     const stream = file.createReadStream();
-    stream.once("close", async () => {
+    stream.once("end", async () => {
       await file.close();
     })
     return stream;

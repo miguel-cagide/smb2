@@ -3,7 +3,7 @@
   "description": "A SMB2 implementation in TypeScript",
   "repository": "https://github.com/miguel-cagide/smb2",
   "bugs": "https://github.com/miguel-cagide/smb2/issues",
-  "version": "0.6.3",
+  "version": "0.6.0",
   "author": "awo00(miguel-cagide)",
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",

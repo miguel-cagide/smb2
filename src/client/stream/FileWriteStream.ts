@@ -24,7 +24,7 @@ export class FileWriteStream extends Writable {
         if (chunkSize > this.maxWriteChunkLength) {
             const promises: Promise<void>[] = [];
             for (let offset = 0; offset < chunkSize; offset += this.maxWriteChunkLength) {
-                promises.push(this.fileWriter(this._bytesWritten + offset, chunk.subarray(offset, this.maxWriteChunkLength)));
+                promises.push(this.fileWriter(this._bytesWritten + offset, chunk.subarray(offset, offset + this.maxWriteChunkLength)));
             }
             Promise.all(promises)
             .then(() => {

@@ -1,4 +1,4 @@
-# @miguel-cagide/smb2
+# @awo00/smb2
 
 > A SMB2 implementation in TypeScript.
 
@@ -6,12 +6,12 @@ Forked from https://github.com/ardean/smb2 using code from https://github.com/Sa
 
 ## Installation
 ```sh
-$ npm i @miguel-cagide/smb2
+$ npm i @awo00/smb2
 ```
 
 ## Usage
 ```ts
-import smb2 from "@miguel-cagide/smb2";
+import smb2 from "@awo00/smb2";
 
 const client = new smb2.Client(host);
 const session = await client.authenticate({

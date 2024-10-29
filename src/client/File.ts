@@ -113,14 +113,14 @@ class File extends EventEmitter {
 
   private async writeChunk(offset: number, chunk: Buffer) {
 
-      const offsetBuffer = Buffer.alloc(8);
-      offsetBuffer.writeBigUInt64LE(BigInt(offset));
+    const offsetBuffer = Buffer.alloc(8);
+    offsetBuffer.writeBigUInt64LE(BigInt(offset));
 
-      await this.tree.request({ type: PacketType.Write }, {
-        fileId: this._id,
-        buffer: chunk,
-        offset: offsetBuffer
-      });
+    await this.tree.request({ type: PacketType.Write }, {
+      fileId: this._id,
+      buffer: chunk,
+      offset: offsetBuffer
+    });
   }
 
   async write(content: Buffer | string) {
@@ -141,9 +141,9 @@ class File extends EventEmitter {
     return new FileWriteStream(maxWriteChunkLength, this.writeChunk.bind(this));
   }
 
-  private async readChunk(initial: number, offset: number) {
+  private async readChunk(initial: number, offset: number, chunkSize = maxReadChunkLength) {
     const fileSize = Number(this.fileSize);
-    const nextOffset = (initial + 1) * maxReadChunkLength;
+    const nextOffset = (initial + 1) * chunkSize;
     const length = nextOffset > fileSize ? fileSize - offset : nextOffset - offset;
 
     const lengthBuffer = Buffer.alloc(4);
@@ -174,14 +174,23 @@ class File extends EventEmitter {
     return buffer;
   }
 
-  createReadStream() {
+  createReadStream(options?: {
+    start?: number;
+    end?: number;
+  }) {
     const fileSize = Number(this.fileSize);
     return Readable.from(async function* read() {
-      const chunkCount = Math.ceil(fileSize / maxReadChunkLength);
-  
+      const chunkCount = Math.ceil((fileSize - (options?.start || 0)) / maxReadChunkLength);
+      let read = 0;
       for (let index = 0; index < chunkCount; index++) {
-        const offset = index * maxReadChunkLength;
-        yield ((await this.readChunk(index, offset)) as Buffer);
+        const nextChunk = options?.end ? (read + maxReadChunkLength >= options?.end ? options?.end - read : maxReadChunkLength) : maxReadChunkLength;
+        if (nextChunk <= 0) {
+          break;
+        }
+        const offset = (options?.start || 0) + index * maxReadChunkLength;
+        const chunkData = ((await this.readChunk(index, offset, nextChunk)) as Buffer);
+        read += chunkData.length;
+        yield chunkData;
       }
     }.bind(this)());
   }

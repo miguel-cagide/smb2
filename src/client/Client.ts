@@ -9,6 +9,7 @@ import StatusCode from "../protocol/smb2/StatusCode";
 import Smb2PacketType from "../protocol/smb2/PacketType";
 import Session, { AuthenticateOptions } from "./Session";
 import * as structureUtil from "../protocol/structureUtil";
+import { signMessage, verifyMessage, isMessageSigned } from "../protocol/smb2/signing";
 
 export interface Options {
   port?: number;
@@ -110,10 +111,28 @@ class Client extends EventEmitter {
     return await this.send(request);
   }
 
+  /**
+   * Finds the active session matching the given hex-encoded session ID.
+   */
+  findSessionById(sessionId: string): Session | undefined {
+    return this.sessions.find(s => s._id === sessionId);
+  }
+
   async send(request: Request) {
     if (!this.connected) throw new Error("not_connected");
 
     const buffer = request.serialize();
+
+    // Sign the outgoing packet when signing is active for the session.
+    // serialize() returns [4-byte NetBIOS prefix][SMB2 message].
+    // Signing operates on the SMB2 message portion (offset 4+).
+    if (request.header.sessionId) {
+      const session = this.findSessionById(request.header.sessionId);
+      if (session && session.signingActive && session.signingKey) {
+        signMessage(session.signingKey, buffer.slice(4));
+      }
+    }
+
     this.socket.write(buffer);
 
     const messageId = request.header.messageId;
@@ -174,6 +193,9 @@ class Client extends EventEmitter {
     this.responseRestChunk = restChunk;
 
     for (const chunk of chunks) {
+      // Verify signature before parsing if signing is active
+      this.verifySignature(chunk);
+
       const response = Response.parse(chunk);
       this.onResponse(response);
     }
@@ -198,6 +220,27 @@ class Client extends EventEmitter {
 
   onError = (err: Error) => {
     this.emit("error", err);
+  }
+
+  /**
+   * Verifies the SMB2 signature on an incoming message chunk.
+   * The chunk does NOT include the 4-byte NetBIOS prefix.
+   */
+  private verifySignature(chunk: Buffer) {
+    // Need at least 64 bytes for a valid SMB2 header
+    if (chunk.length < 64) return;
+
+    if (!isMessageSigned(chunk)) return;
+
+    // Read sessionId from the raw header (8 bytes hex at offset 40)
+    const sessionId = chunk.slice(40, 48).toString("hex");
+
+    const session = this.findSessionById(sessionId);
+    if (!session || !session.signingActive || !session.signingKey) return;
+
+    if (!verifyMessage(session.signingKey, chunk)) {
+      throw new Error("smb2_invalid_signature");
+    }
   }
 
   onClose = (hadError: boolean) => {

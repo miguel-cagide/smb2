@@ -258,7 +258,13 @@ export const encodeAuthenticationMessage = (username: string, hostname: string, 
   lmResponse.copy(buffer, lmResponseOffset, 0, lmResponseLength);
   ntResponse.copy(buffer, ntResponseOffset, 0, ntResponseLength);
 
-  return buffer;
+  // Derive the NTLM User Session Key: MD4(MD4(unicode(password)))
+  const ntHashForSessionKey = createNtHash(password);
+  const sessionKeyMd4 = jsmd4.create();
+  sessionKeyMd4.update(ntHashForSessionKey);
+  const sessionKey = Buffer.from(sessionKeyMd4.digest());
+
+  return { buffer, sessionKey };
 };
 
 export const generateServerChallenge = () => {

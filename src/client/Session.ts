@@ -6,10 +6,18 @@ import Header from "../protocol/smb2/Header";
 import * as ntlmUtil from "../protocol/ntlm/util";
 import PacketType from "../protocol/smb2/PacketType";
 
+/**
+ * SecurityMode flag values as per MS-SMB2 2.2.3 / 2.2.5.
+ */
+const SIGNING_ENABLED  = 0x01;
+const SIGNING_REQUIRED = 0x02;
+
 export interface AuthenticateOptions {
   domain: string;
   username: string;
   password: string;
+  /** When true the client will require signing. Defaults to false (signing enabled but not required). */
+  signingRequired?: boolean;
 }
 
 interface Session {
@@ -21,6 +29,11 @@ interface Session {
 class Session extends EventEmitter {
   _id: string;
   authenticated: boolean = false;
+
+  /** The negotiated session signing key (NTLM User Session Key). */
+  signingKey: Buffer | null = null;
+  /** Whether message signing is active for this session. */
+  signingActive: boolean = false;
 
   connectedTrees: Tree[] = [];
 
@@ -58,33 +71,58 @@ class Session extends EventEmitter {
   async authenticate(options: AuthenticateOptions) {
     if (this.authenticated) return;
 
-    await this.request({
+    const clientSigningRequired = options.signingRequired === true;
+    const securityMode = clientSigningRequired
+      ? (SIGNING_ENABLED | SIGNING_REQUIRED)
+      : SIGNING_ENABLED;
+
+    // Step 1 — Negotiate
+    const negotiateResponse = await this.request({
       type: PacketType.Negotiate
     }, {
       dialects: [
         Dialect.Smb202,
         Dialect.Smb210
-      ]
+      ],
+      securityMode
     });
+
+    // Determine whether the server requires signing
+    const serverSecurityMode: number = negotiateResponse.body.securityMode ?? 0;
+    const serverSigningRequired = (serverSecurityMode & SIGNING_REQUIRED) !== 0;
+
+    // Step 2 — SessionSetup (NTLM Type 1 – Negotiation)
     const sessionSetupResponse = await this.request(
       { type: PacketType.SessionSetup },
-      { buffer: ntlmUtil.encodeNegotiationMessage(this.client.host, options.domain) }
+      {
+        buffer: ntlmUtil.encodeNegotiationMessage(this.client.host, options.domain),
+        securityMode
+      }
     );
     this._id = sessionSetupResponse.header.sessionId;
 
+    // Step 3 — SessionSetup (NTLM Type 3 – Authentication)
     const nonce = ntlmUtil.decodeChallengeMessage(sessionSetupResponse.body.buffer as Buffer);
+    const authResult = ntlmUtil.encodeAuthenticationMessage(
+      options.username,
+      this.client.host,
+      options.domain,
+      nonce,
+      options.password
+    );
     await this.request(
       { type: PacketType.SessionSetup },
       {
-        buffer: ntlmUtil.encodeAuthenticationMessage(
-          options.username,
-          this.client.host,
-          options.domain,
-          nonce,
-          options.password
-        )
+        buffer: authResult.buffer,
+        securityMode
       }
     );
+
+    // Activate signing if either side requires it
+    if (clientSigningRequired || serverSigningRequired) {
+      this.signingKey = authResult.sessionKey;
+      this.signingActive = true;
+    }
 
     this.authenticated = true;
 

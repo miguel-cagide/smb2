@@ -12,6 +12,24 @@ import { FileInfoClass, InfoType } from "../protocol/smb2/packets/SetInfo";
 import { Readable } from "stream";
 import { FileWriteStream } from "./stream/FileWriteStream";
 
+export type FileStats = {
+  structureSize: number;
+  oplockLevel: number;
+  flags: number;
+  createAction: number;
+  creationTime: bigint;
+  lastAccessTime: bigint;
+  lastWriteTime: bigint;
+  changeTime: bigint;
+  allocationSize: bigint;
+  endOfFile: bigint;
+  fileAttributes: number;
+  reserved2: number;
+  fileId: string;
+  createContextsOffset: number;
+  createContextsLength: number;
+}
+
 const maxReadChunkLength = 0x00010000;
 const maxWriteChunkLength = 0x00010000 - 0x71;
 
@@ -31,6 +49,7 @@ class File extends EventEmitter {
   _id: Buffer;
   isOpen: boolean;
   fileSize: bigint;
+  private _stats: FileStats;
 
   constructor(
     private tree: Tree
@@ -64,9 +83,30 @@ class File extends EventEmitter {
 
     this._id = response.body.fileId as Buffer;
     this.fileSize = response.body.endOfFile as bigint;
+    this._stats = {
+      structureSize: response.body.structureSize,
+      oplockLevel: response.body.oplockLevel,
+      flags: response.body.flags,
+      createAction: response.body.createAction,
+      creationTime: response.body.creationTime,
+      lastAccessTime: response.body.lastAccessTime,
+      lastWriteTime: response.body.lastWriteTime,
+      changeTime: response.body.changeTime,
+      allocationSize: response.body.allocationSize,
+      endOfFile: response.body.endOfFile,
+      fileAttributes: response.body.fileAttributes,
+      reserved2: response.body.reserved2,
+      fileId: response.body.fileId,
+      createContextsOffset: response.body.createContextsOffset,
+      createContextsLength: response.body.createContextsLength
+    };
     this.isOpen = true;
 
     this.emit("open", this);
+  }
+
+  get stats(): Readonly<FileStats> {
+    return this._stats;
   }
 
   async create(path: string) {
@@ -141,24 +181,19 @@ class File extends EventEmitter {
     return new FileWriteStream(maxWriteChunkLength, this.writeChunk.bind(this));
   }
 
-  private async readChunk(initial: number, offset: number, chunkSize = maxReadChunkLength) {
+  private async readChunk(offset: number, chunkSize = maxReadChunkLength) {
     const fileSize = Number(this.fileSize);
-    const nextOffset = (initial + 1) * chunkSize;
-    const length = nextOffset > fileSize ? fileSize - offset : nextOffset - offset;
-
+    const length = offset + chunkSize > fileSize ? fileSize - offset : chunkSize;
     const lengthBuffer = Buffer.alloc(4);
     lengthBuffer.writeInt32LE(length, 0);
-
     const offsetBuffer = Buffer.alloc(8);
     offsetBuffer.writeBigUInt64LE(BigInt(offset));
-
     const response = await this.tree.request({ type: PacketType.Read }, {
       fileId: this._id,
       length: lengthBuffer,
       offset: offsetBuffer
     });
-
-    return response.body.buffer as Buffer;
+    return response.body.buffer;
   }
 
   async read() {
@@ -168,7 +203,7 @@ class File extends EventEmitter {
     const buffer = Buffer.alloc(fileSize);
     for (let index = 0; index < chunkCount; index++) {
       const offset = index * maxReadChunkLength;
-      ((await this.readChunk(index, offset)) as Buffer).copy(buffer, offset);
+      ((await this.readChunk(offset)) as Buffer).copy(buffer, offset);
     }
 
     return buffer;
@@ -180,16 +215,18 @@ class File extends EventEmitter {
   }) {
     const fileSize = Number(this.fileSize);
     return Readable.from(async function* read() {
-      const chunkCount = Math.ceil((fileSize - (options?.start || 0)) / maxReadChunkLength);
-      let read = 0;
-      for (let index = 0; index < chunkCount; index++) {
-        const nextChunk = options?.end ? (read + maxReadChunkLength >= options?.end ? options?.end - read : maxReadChunkLength) : maxReadChunkLength;
-        if (nextChunk <= 0) {
-          break;
+      const maxChunks = fileSize / maxReadChunkLength;
+      const roundedMaxChunks = Math.ceil(maxChunks);
+      const chunkCount = (fileSize - (options?.start || 0)) / maxReadChunkLength;
+      const startChunk = Math.floor(maxChunks - chunkCount);
+      let offset = (((maxChunks - chunkCount) % 1) + startChunk) * maxReadChunkLength;
+      for (let index = startChunk; index < roundedMaxChunks; index++) {
+        const chunkSize = options?.end ? ((offset + maxReadChunkLength >= options?.end ? options?.end - offset : maxReadChunkLength)) : maxReadChunkLength;
+        if (chunkSize <= 0 || offset > this.fileSize) {
+            break;
         }
-        const offset = (options?.start || 0) + index * maxReadChunkLength;
-        const chunkData = ((await this.readChunk(index, offset, nextChunk)) as Buffer);
-        read += chunkData.length;
+        const chunkData = (await this.readChunk(offset, chunkSize));
+        offset += chunkSize;
         yield chunkData;
       }
     }.bind(this)());

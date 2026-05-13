@@ -222,6 +222,7 @@ class Client extends EventEmitter {
     this.emit("error", err);
   }
 
+
   /**
    * Verifies the SMB2 signature on an incoming message chunk.
    * The chunk does NOT include the 4-byte NetBIOS prefix.

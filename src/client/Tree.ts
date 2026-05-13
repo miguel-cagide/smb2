@@ -132,11 +132,11 @@ class Tree extends EventEmitter {
     await file.close();
   }
 
-  async createFileWriteStream(path: string) {
+  async createFileWriteStream(path: string, offset: number = 0) {
     const file = new File(this);
     this.registerFile(file);
     await file.create(path);
-    const stream = file.createWriteStream();
+    const stream = file.createWriteStream(offset);
     stream.once("close", async () => {
       await file.setSize(BigInt(stream.bytesWritten));
       file.close();

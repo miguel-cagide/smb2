@@ -32,7 +32,6 @@ export type FileStats = {
 
 const maxReadChunkLength = 0x00010000;
 const maxWriteChunkLength = 0x00010000 - 0x71;
-
 interface OpenOptions {
   desiredAccess?: FilePipePrinterAccess;
   createDisposition?: CreateDispositionType;
@@ -177,8 +176,8 @@ class File extends EventEmitter {
     }
   }
 
-  createWriteStream() {
-    return new FileWriteStream(maxWriteChunkLength, this.writeChunk.bind(this));
+  createWriteStream(offset: number = 0) {
+    return new FileWriteStream(maxWriteChunkLength, this.writeChunk.bind(this), offset);
   }
 
   private async readChunk(offset: number, chunkSize = maxReadChunkLength) {

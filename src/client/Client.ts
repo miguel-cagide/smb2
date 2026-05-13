@@ -222,26 +222,6 @@ class Client extends EventEmitter {
     this.emit("error", err);
   }
 
-  /**
-   * Verifies the SMB2 signature on an incoming message chunk.
-   * The chunk does NOT include the 4-byte NetBIOS prefix.
-   */
-  private verifySignature(chunk: Buffer) {
-    // Need at least 64 bytes for a valid SMB2 header
-    if (chunk.length < 64) return;
-
-    if (!isMessageSigned(chunk)) return;
-
-    // Read sessionId from the raw header (8 bytes hex at offset 40)
-    const sessionId = chunk.slice(40, 48).toString("hex");
-
-    const session = this.findSessionById(sessionId);
-    if (!session || !session.signingActive || !session.signingKey) return;
-
-    if (!verifyMessage(session.signingKey, chunk)) {
-      throw new Error("smb2_invalid_signature");
-    }
-  }
 
   /**
    * Verifies the SMB2 signature on an incoming message chunk.

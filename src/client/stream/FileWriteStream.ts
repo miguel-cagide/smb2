@@ -12,11 +12,11 @@ export class FileWriteStream extends Writable {
         return this._bytesWritten;
     }
 
-    constructor(maxWriteChunkLength: number, fileWriter: FileWriter) {
+    constructor(maxWriteChunkLength: number, fileWriter: FileWriter, initialBytesWritten: number = 0) {
         super();
         this.maxWriteChunkLength = maxWriteChunkLength;
         this.fileWriter = fileWriter;
-        this._bytesWritten = 0;
+        this._bytesWritten = initialBytesWritten;
     }
 
     _write(chunk: Buffer, encoding, callback) {

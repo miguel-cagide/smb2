@@ -1,4 +1,5 @@
 import File from "./File";
+import { withErrorContext } from "./SmbError";
 import Session from "./Session";
 import Directory from "./Directory";
 import { EventEmitter } from "events";
@@ -29,20 +30,22 @@ class Tree extends EventEmitter {
   }
 
   async connect(path: string) {
-    if (this.connected || this.connecting) return;
-    this.connecting = true;
+    return withErrorContext("connectTree", path, async () => {
+      if (this.connected || this.connecting) return;
+      this.connecting = true;
 
-    const buffer = Buffer.from(
-      util.toWindowsPath(`//${this.session.client.host}:${this.session.client.port}/${path}`),
-      "ucs2"
-    );
-    const response = await this.request({ type: PacketType.TreeConnect }, { buffer });
-    this._id = response.header.treeId;
+      const buffer = Buffer.from(
+        util.toWindowsPath(`//${this.session.client.host}:${this.session.client.port}/${path}`),
+        "ucs2"
+      );
+      const response = await this.request({ type: PacketType.TreeConnect }, { buffer });
+      this._id = response.header.treeId;
 
-    this.connecting = false;
-    this.connected = true;
+      this.connecting = false;
+      this.connected = true;
 
-    this.emit("connect", this);
+      this.emit("connect", this);
+    });
   }
 
   async disconnect() {
@@ -60,29 +63,35 @@ class Tree extends EventEmitter {
   }
 
   async createDirectory(path: string) {
-    const directory = new Directory(this);
-    this.registerDirectory(directory);
+    return withErrorContext("createDirectory", path, async () => {
+      const directory = new Directory(this);
+      this.registerDirectory(directory);
 
-    await directory.create(path);
-    await directory.close();
+      await directory.create(path);
+      await directory.close();
+    });
   }
 
   async removeDirectory(path: string) {
-    const directory = new Directory(this);
-    this.registerDirectory(directory);
+    return withErrorContext("removeDirectory", path, async () => {
+      const directory = new Directory(this);
+      this.registerDirectory(directory);
 
-    await directory.open(path, { desiredAccess: DirectoryAccess.Delete });
-    await directory.remove();
-    await directory.close();
+      await directory.open(path, { desiredAccess: DirectoryAccess.Delete });
+      await directory.remove();
+      await directory.close();
+    });
   }
 
   async renameDirectory(path: string, newPath: string) {
-    const directory = new Directory(this);
-    this.registerDirectory(directory);
+    return withErrorContext("renameDirectory", path, async () => {
+      const directory = new Directory(this);
+      this.registerDirectory(directory);
 
-    await directory.open(path, { desiredAccess: DirectoryAccess.MaximumAllowed });
-    await directory.rename(newPath);
-    await directory.close();
+      await directory.open(path, { desiredAccess: DirectoryAccess.MaximumAllowed });
+      await directory.rename(newPath);
+      await directory.close();
+    });
   }
 
   async watch(onChange?: (response: Response) => void, recursive?: boolean) {
@@ -90,107 +99,127 @@ class Tree extends EventEmitter {
   }
 
   async watchDirectory(path: string = "/", onChange: (response: Response) => void, recursive?: boolean) {
-    const directory = new Directory(this);
-    this.registerDirectory(directory);
+    return withErrorContext("watchDirectory", path, async () => {
+      const directory = new Directory(this);
+      this.registerDirectory(directory);
 
-    await directory.open(path);
-    await directory.watch(recursive);
-    directory.addListener("change", onChange);
+      await directory.open(path);
+      await directory.watch(recursive);
+      directory.addListener("change", onChange);
 
-    return async () => {
-      directory.removeListener("change", onChange);
-      await directory.unwatch();
-    };
+      return async () => {
+        directory.removeListener("change", onChange);
+        await directory.unwatch();
+      };
+    });
   }
 
   async readDirectory(path: string = "/") {
-    const directory = new Directory(this);
-    this.registerDirectory(directory);
+    return withErrorContext("readDirectory", path, async () => {
+      const directory = new Directory(this);
+      this.registerDirectory(directory);
 
-    await directory.open(path);
-    const entries = await directory.read();
-    await directory.close();
-    return entries;
+      await directory.open(path);
+      const entries = await directory.read();
+      await directory.close();
+      return entries;
+    });
   }
 
   async exists(path: string) {
-    const file = new File(this);
-    this.registerFile(file);
-    const exists = await file.exists(path);
-    await file.close();
-    return exists;
+    return withErrorContext("exists", path, async () => {
+      const file = new File(this);
+      this.registerFile(file);
+      const exists = await file.exists(path);
+      await file.close();
+      return exists;
+    });
   }
 
   async createFile(path: string, content?: Buffer | string) {
-    const file = new File(this);
-    this.registerFile(file);
-    await file.create(path);
-    if (typeof content !== "undefined") {
-      await file.setSize(BigInt(content.length));
-      await file.write(content);
-    }
-    await file.close();
+    return withErrorContext("createFile", path, async () => {
+      const file = new File(this);
+      this.registerFile(file);
+      await file.create(path);
+      if (typeof content !== "undefined") {
+        await file.setSize(BigInt(content.length));
+        await file.write(content);
+      }
+      await file.close();
+    });
   }
 
   async createFileWriteStream(path: string, offset: number = 0) {
-    const file = new File(this);
-    this.registerFile(file);
-    await file.create(path);
-    const stream = file.createWriteStream(offset);
-    stream.once("close", async () => {
-      await file.setSize(BigInt(stream.bytesWritten));
-      file.close();
+    return withErrorContext("createFileWriteStream", path, async () => {
+      const file = new File(this);
+      this.registerFile(file);
+      await file.create(path);
+      const stream = file.createWriteStream(offset);
+      stream.once("close", async () => {
+        await file.setSize(BigInt(stream.bytesWritten));
+        file.close();
+      });
+      return stream;
     });
-    return stream;
   }
 
   async removeFile(path: string) {
-    const file = new File(this);
-    this.registerFile(file);
-    await file.open(path, { desiredAccess: FilePipePrinterAccess.Delete });
-    await file.remove();
-    await file.close();
+    return withErrorContext("removeFile", path, async () => {
+      const file = new File(this);
+      this.registerFile(file);
+      await file.open(path, { desiredAccess: FilePipePrinterAccess.Delete });
+      await file.remove();
+      await file.close();
+    });
   }
 
   async renameFile(path: string, newPath: string) {
-    const file = new File(this);
-    this.registerFile(file);
-    await file.open(path, { desiredAccess: FilePipePrinterAccess.MaximumAllowed });
-    await file.rename(newPath);
-    await file.close();
+    return withErrorContext("renameFile", path, async () => {
+      const file = new File(this);
+      this.registerFile(file);
+      await file.open(path, { desiredAccess: FilePipePrinterAccess.MaximumAllowed });
+      await file.rename(newPath);
+      await file.close();
+    });
   }
 
   async readFile(path: string) {
-    const file = new File(this);
-    this.registerFile(file);
+    return withErrorContext("readFile", path, async () => {
+      const file = new File(this);
+      this.registerFile(file);
 
-    await file.open(path);
-    const buffer = await file.read();
-    await file.close();
-    return buffer;
+      await file.open(path);
+      const buffer = await file.read();
+      await file.close();
+      return buffer;
+    });
   }
 
   async createFileReadStream(path: string, options?: {
     start?: number;
     end?: number;
   }) {
-    const file = new File(this);
-    this.registerFile(file);
+    return withErrorContext("createFileReadStream", path, async () => {
+      const file = new File(this);
+      this.registerFile(file);
 
-    await file.open(path);
-    const stream = file.createReadStream(options);
-    stream.once("close", async () => {
-      await file.close();
+      await file.open(path);
+      const stream = file.createReadStream(options);
+      stream.once("close", async () => {
+        await file.close();
+      });
+      return stream;
     });
-    return stream;
   }
 
   async stats(path) {
-    const file = new File(this);
-    this.registerFile(file);
+    return withErrorContext("stats", path, async () => {
+      const file = new File(this);
+      this.registerFile(file);
 
-    await file.open(path);
-    return file.stats;
+      await file.open(path);
+      return file.stats;
+    });
   }
 
   private registerFile(file: File) {

@@ -11,7 +11,8 @@
   "scripts": {
     "start": "nodemon",
     "build": "tsc --build",
-    "lint": "tslint --project ."
+    "lint": "tslint --project .",
+    "test": "node --require ts-node/register --test \"test/**/*.test.ts\""
   },
   "files": [
     "dist"
@@ -26,7 +27,7 @@
     "file-sharing"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "des.js": "^1.1.0",
@@ -34,10 +35,10 @@
     "moment-timezone": "^0.5.31"
   },
   "devDependencies": {
-    "@types/node": "^13.7.4",
-    "nodemon": "^2.0.4",
-    "ts-node": "^9.0.0",
+    "@types/node": "^22.20.5",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.2",
     "tslint": "^6.1.0",
-    "typescript": "^4.0.3"
+    "typescript": "^5.9.3"
   }
 }

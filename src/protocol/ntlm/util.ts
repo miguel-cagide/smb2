@@ -3,7 +3,20 @@ import desjs from "des.js";
 import jsmd4 from "js-md4";
 import NegotiateFlag from "./NegotiateFlag";
 
-export const encodeNegotiationMessage = (hostname: string, domain: string) => {
+const ntlmV1NegotiateFlags = NegotiateFlag.UnicodeEncoding | NegotiateFlag.NTLMSessionSecurity | NegotiateFlag.AlwaysSign;
+
+// TargetNameSupplied = NTLMSSP_REQUEST_TARGET and NTLMSessionSecurity = NTLMSSP_NEGOTIATE_NTLM in MS-NLMP terms.
+export const ntlmV2NegotiateFlags =
+  NegotiateFlag.UnicodeEncoding |
+  NegotiateFlag.TargetNameSupplied |
+  NegotiateFlag.Sign |
+  NegotiateFlag.NTLMSessionSecurity |
+  NegotiateFlag.AlwaysSign |
+  NegotiateFlag.ExtendedSessionSecurity |
+  NegotiateFlag.Use128BitEncryption |
+  NegotiateFlag.Use56BitEncryption;
+
+export const encodeNegotiationMessage = (hostname: string, domain: string, negotiateFlags: number = ntlmV1NegotiateFlags) => {
   hostname = hostname.toUpperCase();
   domain = domain.toUpperCase();
 
@@ -21,8 +34,7 @@ export const encodeNegotiationMessage = (hostname: string, domain: string) => {
   buffer.writeUInt32LE(1, offset);
   offset += 4;
 
-  const negotiateFlags = NegotiateFlag.UnicodeEncoding | NegotiateFlag.NTLMSessionSecurity | NegotiateFlag.AlwaysSign;
-  buffer.writeUInt32LE(negotiateFlags, offset);
+  buffer.writeUInt32LE(negotiateFlags >>> 0, offset);
   offset += 4;
 
   buffer.writeUInt16LE(domainLength, offset);
@@ -122,38 +134,40 @@ export const encodeChallengeMessage = (negotiateFlags: number) => {
   return buffer;
 };
 
-export const decodeChallengeMessage = (buffer: Buffer) => {
-  let offset = 0;
+export interface ChallengeMessage {
+  negotiateFlags: number;
+  serverChallenge: Buffer;
+  targetName: Buffer;
+  targetInfo: Buffer;
+}
 
+export const parseChallengeMessage = (buffer: Buffer): ChallengeMessage => {
   const protocol = buffer.slice(0, 7).toString("ascii");
   if (
     protocol !== "NTLMSSP" ||
     buffer.readInt8(7) !== 0x00
   ) throw new Error("ntlmssp_header_not_found");
-  offset += 8;
 
-  const type = buffer.readUInt32LE(offset);
+  const type = buffer.readUInt32LE(8);
   if (type !== 0x02) throw new Error("ntlmssp_type_is_not_two");
-  offset += 4;
 
-  const targetNameLength = buffer.readUInt16LE(offset);
-  offset += 2;
+  const readField = (fieldOffset: number) => {
+    if (buffer.length < fieldOffset + 8) return Buffer.alloc(0);
+    const length = buffer.readUInt16LE(fieldOffset);
+    const offset = buffer.readUInt32LE(fieldOffset + 4);
+    return Buffer.from(buffer.slice(offset, offset + length));
+  };
 
-  const targetNameMaxLength = buffer.readUInt16LE(offset);
-  offset += 2;
+  return {
+    targetName: readField(12),
+    negotiateFlags: buffer.readUInt32LE(20),
+    serverChallenge: Buffer.from(buffer.slice(24, 32)),
+    targetInfo: readField(40)
+  };
+};
 
-  const targetNameOffset = buffer.readUInt32LE(offset);
-  offset += 4;
-
-  const negotiateFlags = buffer.readUInt32LE(offset);
-  offset += 4;
-
-  const serverChallenge = buffer.slice(offset, offset + 8);
-  offset += 8;
-
-  offset += 8; // Reserved
-
-  return serverChallenge;
+export const decodeChallengeMessage = (buffer: Buffer) => {
+  return parseChallengeMessage(buffer).serverChallenge;
 };
 
 export const encodeAuthenticationMessage = (username: string, hostname: string, domain: string, nonce: Buffer, password: string) => {
@@ -263,6 +277,155 @@ export const encodeAuthenticationMessage = (username: string, hostname: string, 
   const sessionKeyMd4 = jsmd4.create();
   sessionKeyMd4.update(ntHashForSessionKey);
   const sessionKey = Buffer.from(sessionKeyMd4.digest());
+
+  return { buffer, sessionKey };
+};
+
+const AvId = {
+  EOL: 0,
+  Flags: 6,
+  Timestamp: 7
+};
+
+const AV_FLAG_MIC_PRESENT = 0x00000002;
+const AUTHENTICATE_V2_HEADER_LENGTH = 88;
+const MIC_OFFSET = 72;
+
+interface AvPair {
+  id: number;
+  value: Buffer;
+}
+
+const parseAvPairs = (buffer: Buffer): AvPair[] => {
+  const pairs: AvPair[] = [];
+  let offset = 0;
+  while (offset + 4 <= buffer.length) {
+    const id = buffer.readUInt16LE(offset);
+    const length = buffer.readUInt16LE(offset + 2);
+    if (id === AvId.EOL) break;
+    pairs.push({ id, value: Buffer.from(buffer.slice(offset + 4, offset + 4 + length)) });
+    offset += 4 + length;
+  }
+  return pairs;
+};
+
+const serializeAvPairs = (pairs: AvPair[]) => {
+  const buffers = pairs.map(pair => {
+    const header = Buffer.alloc(4);
+    header.writeUInt16LE(pair.id, 0);
+    header.writeUInt16LE(pair.value.length, 2);
+    return Buffer.concat([header, pair.value]);
+  });
+  buffers.push(Buffer.alloc(4)); // MsvAvEOL
+  return Buffer.concat(buffers);
+};
+
+const hmacMd5 = (key: Buffer, data: Buffer) => crypto.createHmac("md5", key).update(data).digest();
+
+const getFileTime = (date: Date = new Date()) => {
+  const buffer = Buffer.alloc(8);
+  buffer.writeBigUInt64LE((BigInt(date.getTime()) + 11644473600000n) * 10000n);
+  return buffer;
+};
+
+export const createNtlmV2Hash = (username: string, domain: string, password: string) => {
+  return hmacMd5(createNtHash(password), Buffer.from(username.toUpperCase() + domain, "utf16le"));
+};
+
+export interface AuthenticationV2Options {
+  /** 8 random bytes by default; only override for deterministic tests. */
+  clientChallenge?: Buffer;
+  /** FILETIME; defaults to the server's MsvAvTimestamp or the current time. */
+  timestamp?: Buffer;
+  /** Raw NEGOTIATE_MESSAGE and CHALLENGE_MESSAGE, required to compute the MIC. */
+  negotiateMessage?: Buffer;
+  challengeMessage?: Buffer;
+}
+
+/**
+ * Builds an NTLMv2 AUTHENTICATE_MESSAGE as per MS-NLMP 3.1.5.1.2 / 3.3.2.
+ * Key exchange is not negotiated, so the exported session key is the SessionBaseKey.
+ */
+export const encodeAuthenticationMessageV2 = (
+  username: string,
+  hostname: string,
+  domain: string,
+  challenge: ChallengeMessage,
+  password: string,
+  options: AuthenticationV2Options = {}
+) => {
+  hostname = hostname.toUpperCase();
+
+  const clientChallenge = options.clientChallenge || crypto.randomBytes(8);
+  const avPairs = parseAvPairs(challenge.targetInfo);
+  const serverTimestamp = avPairs.find(pair => pair.id === AvId.Timestamp)?.value;
+  const timestamp = options.timestamp || serverTimestamp || getFileTime();
+
+  // When the server sends MsvAvTimestamp the client must omit the LMv2 response and should send a MIC.
+  const includeMic = !!serverTimestamp && !!options.negotiateMessage && !!options.challengeMessage;
+  if (includeMic) {
+    let flagsPair = avPairs.find(pair => pair.id === AvId.Flags);
+    if (!flagsPair) {
+      flagsPair = { id: AvId.Flags, value: Buffer.alloc(4) };
+      avPairs.push(flagsPair);
+    }
+    flagsPair.value.writeUInt32LE((flagsPair.value.readUInt32LE(0) | AV_FLAG_MIC_PRESENT) >>> 0, 0);
+  }
+
+  const responseKeyNt = createNtlmV2Hash(username, domain, password);
+  const temp = Buffer.concat([
+    Buffer.from([0x01, 0x01, 0, 0, 0, 0, 0, 0]),
+    timestamp,
+    clientChallenge,
+    Buffer.alloc(4),
+    serializeAvPairs(avPairs),
+    Buffer.alloc(4)
+  ]);
+  const ntProofStr = hmacMd5(responseKeyNt, Buffer.concat([challenge.serverChallenge, temp]));
+  const ntResponse = Buffer.concat([ntProofStr, temp]);
+  const lmResponse = serverTimestamp ?
+    Buffer.alloc(24) :
+    Buffer.concat([hmacMd5(responseKeyNt, Buffer.concat([challenge.serverChallenge, clientChallenge])), clientChallenge]);
+  const sessionKey = hmacMd5(responseKeyNt, ntProofStr);
+
+  const domainBuffer = Buffer.from(domain, "utf16le");
+  const usernameBuffer = Buffer.from(username, "utf16le");
+  const hostnameBuffer = Buffer.from(hostname, "utf16le");
+
+  const domainOffset = AUTHENTICATE_V2_HEADER_LENGTH;
+  const usernameOffset = domainOffset + domainBuffer.length;
+  const hostnameOffset = usernameOffset + usernameBuffer.length;
+  const lmResponseOffset = hostnameOffset + hostnameBuffer.length;
+  const ntResponseOffset = lmResponseOffset + lmResponse.length;
+  const messageLength = ntResponseOffset + ntResponse.length;
+
+  const buffer = Buffer.alloc(messageLength);
+  buffer.write("NTLMSSP\0", 0, 8, "ascii");
+  buffer.writeUInt32LE(3, 8);
+
+  const fields: [Buffer, number][] = [
+    [lmResponse, lmResponseOffset],
+    [ntResponse, ntResponseOffset],
+    [domainBuffer, domainOffset],
+    [usernameBuffer, usernameOffset],
+    [hostnameBuffer, hostnameOffset],
+    [Buffer.alloc(0), messageLength] // EncryptedRandomSessionKey: empty, key exchange is not negotiated
+  ];
+  fields.forEach(([payload, payloadOffset], index) => {
+    const fieldOffset = 12 + index * 8;
+    buffer.writeUInt16LE(payload.length, fieldOffset);
+    buffer.writeUInt16LE(payload.length, fieldOffset + 2);
+    buffer.writeUInt32LE(payloadOffset, fieldOffset + 4);
+    payload.copy(buffer, payloadOffset);
+  });
+
+  const negotiateFlags = (ntlmV2NegotiateFlags & challenge.negotiateFlags) | NegotiateFlag.UnicodeEncoding;
+  buffer.writeUInt32LE(negotiateFlags >>> 0, 60);
+
+  // Version (64-71) and MIC (72-87) remain zero until the MIC is computed
+  if (includeMic) {
+    hmacMd5(sessionKey, Buffer.concat([options.negotiateMessage, options.challengeMessage, buffer])).copy(buffer, MIC_OFFSET);
+  }
 
   return { buffer, sessionKey };
 };

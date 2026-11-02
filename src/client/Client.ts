@@ -8,6 +8,7 @@ import Header from "../protocol/smb2/Header";
 import StatusCode from "../protocol/smb2/StatusCode";
 import Smb2PacketType from "../protocol/smb2/PacketType";
 import Session, { AuthenticateOptions } from "./Session";
+import SmbError, { withErrorContext } from "./SmbError";
 import * as structureUtil from "../protocol/structureUtil";
 import { signMessage, verifyMessage, isMessageSigned } from "../protocol/smb2/signing";
 
@@ -15,6 +16,8 @@ export interface Options {
   port?: number;
   connectTimeout?: number;
   requestTimeout?: number;
+  /** Reject failed requests with a descriptive `SmbError` instead of the raw `Response`. Defaults to false. */
+  readableErrors?: boolean;
 }
 
 interface Client {
@@ -39,7 +42,7 @@ class Client extends EventEmitter {
   port: number = 445;
 
   connectTimeout: number = 5 * 1000;
-  connectTimeoutId: NodeJS.Timer;
+  connectTimeoutId: NodeJS.Timeout;
 
   requestTimeout: number = 5 * 1000;
   requestTimeoutIdMap = new Map<bigint, NodeJS.Timeout>();
@@ -156,7 +159,7 @@ class Client extends EventEmitter {
           response.header.status !== StatusCode.MoreProcessingRequired &&
           response.header.status !== StatusCode.FileClosed
         ) {
-          reject(response);
+          reject(this.options.readableErrors ? new SmbError(response) : response);
         } else {
           resolve(response);
         }
@@ -209,6 +212,14 @@ class Client extends EventEmitter {
       this.emit("changeNotify", response);
     }
 
+    // [MS-SMB2] 3.2.5.1.5: an interim STATUS_PENDING response is not final; wait for the final response
+    // with the same MessageId. ChangeNotify is the exception because watchers resolve on the interim response
+    // and receive the final one through the "changeNotify" event.
+    if (
+      response.header.status === StatusCode.Pending &&
+      response.header.type !== Smb2PacketType.ChangeNotify
+    ) return;
+
     const messageId = response.header.messageId;
     if (this.responseCallbackMap.has(messageId)) {
       this.responseCallbackMap.get(messageId)(response);
@@ -260,7 +271,11 @@ class Client extends EventEmitter {
 
     const session = new Session(this);
     this.registerSession(session);
-    await session.authenticate(options);
+    await withErrorContext(
+      "authenticate",
+      options.domain ? `${options.domain}\\${options.username}` : options.username,
+      () => session.authenticate(options)
+    );
     return session;
   }
 

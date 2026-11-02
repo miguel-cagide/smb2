@@ -18,6 +18,8 @@ export interface AuthenticateOptions {
   password: string;
   /** When true the client will require signing. Defaults to false (signing enabled but not required). */
   signingRequired?: boolean;
+  /** NTLM protocol version used to authenticate. Defaults to 2; NTLMv1 is rejected by most modern servers. */
+  ntlmVersion?: 1 | 2;
 }
 
 interface Session {
@@ -92,24 +94,37 @@ class Session extends EventEmitter {
     const serverSigningRequired = (serverSecurityMode & SIGNING_REQUIRED) !== 0;
 
     // Step 2 — SessionSetup (NTLM Type 1 – Negotiation)
+    const useNtlmV2 = options.ntlmVersion !== 1;
+    const negotiateMessage = useNtlmV2 ?
+      ntlmUtil.encodeNegotiationMessage(this.client.host, options.domain, ntlmUtil.ntlmV2NegotiateFlags) :
+      ntlmUtil.encodeNegotiationMessage(this.client.host, options.domain);
     const sessionSetupResponse = await this.request(
       { type: PacketType.SessionSetup },
       {
-        buffer: ntlmUtil.encodeNegotiationMessage(this.client.host, options.domain),
+        buffer: negotiateMessage,
         securityMode
       }
     );
     this._id = sessionSetupResponse.header.sessionId;
 
     // Step 3 — SessionSetup (NTLM Type 3 – Authentication)
-    const nonce = ntlmUtil.decodeChallengeMessage(sessionSetupResponse.body.buffer as Buffer);
-    const authResult = ntlmUtil.encodeAuthenticationMessage(
-      options.username,
-      this.client.host,
-      options.domain,
-      nonce,
-      options.password
-    );
+    const challengeMessage = sessionSetupResponse.body.buffer as Buffer;
+    const authResult = useNtlmV2 ?
+      ntlmUtil.encodeAuthenticationMessageV2(
+        options.username,
+        this.client.host,
+        options.domain,
+        ntlmUtil.parseChallengeMessage(challengeMessage),
+        options.password,
+        { negotiateMessage, challengeMessage }
+      ) :
+      ntlmUtil.encodeAuthenticationMessage(
+        options.username,
+        this.client.host,
+        options.domain,
+        ntlmUtil.decodeChallengeMessage(challengeMessage),
+        options.password
+      );
     await this.request(
       { type: PacketType.SessionSetup },
       {

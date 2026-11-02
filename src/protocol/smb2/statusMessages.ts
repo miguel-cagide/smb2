@@ -5,8 +5,10 @@ export interface StatusInfo {
 
 // Common NTSTATUS values returned by SMB2 servers ([MS-ERREF] 2.3.1)
 const statusMessages: { [status: number]: StatusInfo } = {
+  0x0000010c: { code: "STATUS_NOTIFY_ENUM_DIR", description: "Too many changes to report; the directory must be re-enumerated to find them." },
   0x80000005: { code: "STATUS_BUFFER_OVERFLOW", description: "The data was too large to fit into the specified buffer." },
   0x80000006: { code: "STATUS_NO_MORE_FILES", description: "No more files were found which match the file specification." },
+  0x8000002d: { code: "STATUS_STOPPED_ON_SYMLINK", description: "The path contains a symbolic link that the server did not follow." },
   0xc0000002: { code: "STATUS_NOT_IMPLEMENTED", description: "The requested operation is not implemented by the server." },
   0xc0000003: { code: "STATUS_INVALID_INFO_CLASS", description: "The specified information class is not valid." },
   0xc0000008: { code: "STATUS_INVALID_HANDLE", description: "An invalid file handle was specified." },
@@ -35,6 +37,7 @@ const statusMessages: { [status: number]: StatusInfo } = {
   0xc0000070: { code: "STATUS_INVALID_WORKSTATION", description: "Logon failure: the account is not allowed to log on from this computer." },
   0xc0000071: { code: "STATUS_PASSWORD_EXPIRED", description: "Logon failure: the password has expired." },
   0xc0000072: { code: "STATUS_ACCOUNT_DISABLED", description: "Logon failure: the account is disabled." },
+  0xc000007e: { code: "STATUS_RANGE_NOT_LOCKED", description: "The byte range to unlock was not locked." },
   0xc000007f: { code: "STATUS_DISK_FULL", description: "There is not enough space on the disk." },
   0xc000009a: { code: "STATUS_INSUFFICIENT_RESOURCES", description: "The server has insufficient resources to complete the request." },
   0xc00000b5: { code: "STATUS_IO_TIMEOUT", description: "The I/O operation timed out." },
@@ -61,7 +64,8 @@ const statusMessages: { [status: number]: StatusInfo } = {
   0xc0000234: { code: "STATUS_ACCOUNT_LOCKED_OUT", description: "Logon failure: the account is locked out." },
   0xc0000257: { code: "STATUS_PATH_NOT_COVERED", description: "The path is not covered by this server (DFS referral required)." },
   0xc000035c: { code: "STATUS_NETWORK_SESSION_EXPIRED", description: "The session has expired; re-authentication is required." },
-  0xc0000388: { code: "STATUS_DOWNGRADE_DETECTED", description: "A security downgrade was detected during negotiation." }
+  0xc0000388: { code: "STATUS_DOWNGRADE_DETECTED", description: "A security downgrade was detected during negotiation." },
+  0xc0000467: { code: "STATUS_FILE_NOT_AVAILABLE", description: "The file is temporarily unavailable." }
 };
 
 export const formatStatus = (status: number) =>

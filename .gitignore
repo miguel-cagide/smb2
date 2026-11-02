@@ -3,3 +3,5 @@
 .DS_Store
 *.log
 .npmrc
+# project .npmrc only pins the public registry; never put tokens in it
+!/.npmrc
